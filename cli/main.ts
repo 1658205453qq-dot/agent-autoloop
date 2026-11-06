@@ -33,6 +33,12 @@ const HELP = `Agent 自动化中台
   agent-autoloop doctor                  查哪里没配好
   agent-autoloop check [文件]            检查规则文件，不碰中台；不写文件就查 rules.json
   agent-autoloop rules explain           按本机 rules.json 说明生效的规则、Agent、通道和下次定时
+  agent-autoloop pause <规则> [--reason 原因] [--until 时间]
+                                    暂停一条规则：到点不跑、来事件不接，直到恢复
+  agent-autoloop resume <规则>
+                                    恢复；错过的时段不补跑
+  agent-autoloop run <规则> [--subject 对象] [--reason 说明]
+                                    立即运行一轮，照常排队派活
   agent-autoloop emit <类型> [--dry-run] [--subject x] [--summary x] [--detail x] [--link x] [--id x] [--key 来源密钥]
                                     发一条事件；--dry-run 只预演会派给谁，不连接中台
   agent-autoloop tell <编号> [--task 定时任务名]
@@ -119,10 +125,16 @@ rules.json 里这个定时任务要写 cwd；你答了，中台叫醒它的 Agen
       agent-autoloop key remove <种类> <名字>`,
   },
   mcp: { flags: [], usage: "用法：agent-autoloop mcp" },
+  pause: {
+    flags: ["reason", "until"],
+    usage: "用法：agent-autoloop pause <规则> [--reason 原因] [--until 时间]",
+  },
   // Only its first word is read as anything: the rest is a result in someone's own words, dashes and all.
   resolve: { flags: [], usage: "用法：agent-autoloop resolve <卡片> <结果>" },
   restore: { flags: ["yes"], usage: RESTORE_USAGE },
+  resume: { flags: [], usage: "用法：agent-autoloop resume <规则>" },
   rules: { flags: [], usage: "用法：agent-autoloop rules explain" },
+  run: { flags: ["subject", "reason"], usage: "用法：agent-autoloop run <规则> [--subject 对象] [--reason 说明]" },
   service: { flags: [], usage: "用法：agent-autoloop service install|remove" },
   status: { flags: ["json"], usage: STATUS_USAGE },
   stop: { flags: [], usage: "用法：agent-autoloop stop <第几轮>" },
@@ -410,6 +422,9 @@ async function status(named: Flags) {
   console.log(`${spendLine(state.spending)}\n`);
   for (const agent of state.agents) console.log(`${agent.online ? "●" : "○"} ${agent.name}（${agent.worker}）`);
   for (const channel of state.channels) console.log(`${channel.online ? "●" : "○"} ${channel.name}`);
+  const paused = state.lines.filter((line: { paused?: unknown }) => line.paused);
+  if (paused.length) console.log("\n暂停中（恢复：agent-autoloop resume <规则>）");
+  for (const line of paused) console.log(`  ${line.name}${line.paused.reason ? `：${line.paused.reason}` : ""}`);
   for (const card of state.cards) {
     showCard(card);
     console.log(howToAnswer(card));
@@ -460,6 +475,35 @@ async function resolve(args: string[]) {
   if (!Number.isInteger(card) || card < 1 || !words.length) return fail(TAKES.resolve.usage);
   const { changed } = await ownerClient().resolve(card, words.join(" "));
   console.log(changed ? "结案了。" : "这张卡片已经处理过了，这次没有改动。");
+}
+
+async function pause(args: string[]) {
+  const { named, rest } = flags(args);
+  const body = {
+    ...(text(named.reason) && { reason: text(named.reason) }),
+    ...(text(named.until) && { until: text(named.until) }),
+  };
+  if (!rest[0]) return fail(TAKES.pause.usage);
+  const done = await ownerClient().pause(rest[0], body);
+  console.log(done.changed ? `暂停了「${done.rule}」。` : `「${done.rule}」本来就暂停着。`);
+}
+
+async function resume(args: string[]) {
+  const { rest } = flags(args);
+  if (!rest[0]) return fail(TAKES.resume.usage);
+  const done = await ownerClient().resume(rest[0]);
+  console.log(done.changed ? `恢复了「${done.rule}」。` : `「${done.rule}」本来就没暂停。`);
+}
+
+async function runNow(args: string[]) {
+  const { named, rest } = flags(args);
+  if (!rest[0]) return fail(TAKES.run.usage);
+  const body = {
+    ...(text(named.subject) && { subject: text(named.subject) }),
+    ...(text(named.reason) && { reason: text(named.reason) }),
+  };
+  const done = await ownerClient().run(rest[0], body);
+  console.log(`排上了：第 ${done.run} 轮。`);
 }
 
 async function doctor() {
@@ -584,7 +628,9 @@ async function emit(args: string[]) {
   }
   const secret = text(named.key) ?? config.source?.key ?? fail("这台电脑上没有来源的密钥：用 --key");
   const answer = await client(secret, config).event(event);
-  console.log(answer.routed.length ? `交给了：${answer.routed.join("、")}` : "记下了，没有规则接它。");
+  const paused = answer.paused?.length ? `暂停中没接：${answer.paused.join("、")}` : "";
+  if (answer.routed.length) console.log(`交给了：${answer.routed.join("、")}${paused && `；${paused}`}`);
+  else console.log(paused ? `记下了，${paused}。` : "记下了，没有规则接它。");
 }
 
 async function backupCommand(args: string[]) {
@@ -739,6 +785,9 @@ const commands: Record<string, () => unknown> = {
   doctor,
   check: () => check(args),
   rules: () => rulesCommand(args),
+  pause: () => pause(args),
+  resume: () => resume(args),
+  run: () => runNow(args),
   key: () => key(args),
   emit: () => emit(args),
   tell: () => tell(args),

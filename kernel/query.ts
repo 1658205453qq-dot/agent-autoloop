@@ -1,13 +1,19 @@
 // Reading the view: what the decisions and the doors ask of it, and the shapes they hand out.
 import { credential, type Environment } from "./credentials.ts";
 import { rows, type Fact, type Row, type View } from "./evolve.ts";
-import { ruleOf, type Rules } from "./rules.ts";
+import { ruleOf, type Rule, type Rules } from "./rules.ts";
 import type { Job } from "../protocol/job.ts";
 
 export function configuration(view: View, version?: number): Rules {
   const current = view.get("config", "rules");
   return (version === undefined || version === current?.version ? current : view.get("config", version))?.value;
 }
+/** The owner's pause that keeps a rule from taking work at this moment, if there is one. */
+export function pauseOf(view: View, rule: Rule, now: number): Row | null {
+  const row = view.get("pauses", rule.name);
+  return row && (row.until === null || Date.parse(row.until) > now) ? row : null;
+}
+
 export const workerOf = (view: View, run: Row) => configuration(view, run.rules_version).agents[run.agent]?.worker;
 export function agentsOf(view: View, worker: string) {
   const agents = Object.entries(configuration(view).agents);
