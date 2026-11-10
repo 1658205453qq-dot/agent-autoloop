@@ -52,6 +52,7 @@
       "model": "…",
       "effort": "high",
       "access": "edit",
+      "tier": "…", // 可选：服务档位，现在只有 Codex 插件用，原样传成它的 service_tier，比如 "priority" 就是 Codex 应用里的 Fast；不写就跟那台电脑上 Codex 自己的配置
       "program": "…", // 可选：内置插件启动这个程序，代替自动找到的那个，比如设好环境变量再 exec claude 的脚本
     },
     "cursor": {
