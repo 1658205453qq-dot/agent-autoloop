@@ -18,7 +18,7 @@ export type Turn = {
   cwd: string;
   model?: string;
   effort?: string;
-  /** The service tier to run at, in the agent program's own words. Codex's "priority" is what its app calls Fast. */
+  /** The service tier to run at, in the agent program's own words; plugins whose program has none ignore it. */
   tier?: string;
   access: Access;
   command?: string[];
